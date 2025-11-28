@@ -1,14 +1,57 @@
 import { db } from "../config/db.js";
 import ExcelJS from "exceljs";
 
+// export const getAllNurseData = async (req, res) => {
+//   try {
+//     const [rows] = await db.query("SELECT * FROM nurse");
+//     res.status(200).json({ success: true, data: rows });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
 export const getAllNurseData = async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM nurse");
-    res.status(200).json({ success: true, data: rows });
+    let {
+      page = 1,
+      limit = 10,
+      search = "",
+      sortBy = "id",
+      sortOrder = "ASC",
+    } = req.query;
+
+    page = Number(page);
+    limit = Number(limit);
+    const offset = (page - 1) * limit;
+
+    const allowableSortBy = ["id", "name", "age", "dob", "license_number"];
+    if (!allowableSortBy.includes(sortBy)) {
+      sortBy = "id";
+    }
+
+    sortOrder = sortOrder.toUpperCase() === "ASC" ? "ASC" : "DESC";
+
+    let where = "WHERE 1=1";
+    let searchParams = [];
+    if (search) {
+      where += ` AND (name LIKE ? OR license_number LIKE ?)`;
+      searchParams.push(`%${search}%`, `%${search}%`);
+    }
+    const [countRows] = await db.query(
+      `SELECT COUNT(*) as count FROM nurse ${where}`,
+      search ? searchParams : []
+    );
+    const total = countRows[0].count;
+    const [rows] = await db.query(
+      `SELECT * FROM nurse ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT ? OFFSET ?`,
+      search ? [...searchParams, limit, offset] : [limit, offset]
+    );
+    res.status(200).json({ success: true, data: rows, total });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 export const getSingleNurseData = async (req, res) => {
   try {
     const { id } = req.params;
@@ -56,48 +99,72 @@ export const DeleteNurseData = async (req, res) => {
 
 export const exportNurseDataToCSV = async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM nurse");
+    const { search } = req.query;
 
-    let csv = "id,name,license_number,dob,age\n";
+    let query = "SELECT name, age, dob, license_number FROM nurse WHERE 1=1";
+    let params = [];
 
-    rows.forEach((row) => {
-      csv += `${row.id},${row.name},${row.license_number},${row.dob},${row.age}\n`;
+    if (search) {
+      query += " AND (name LIKE ? OR license_number LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const [rows] = await db.query(query, params);
+
+    let csv = "Name,Age,DOB,License Number\n";
+
+    rows.forEach((r) => {
+      csv += `${r.name},${r.age},${r.dob},${r.license_number}\n`;
     });
 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nurses.csv");
-
     res.send(csv);
+
   } catch (error) {
+    console.log(error);
     res.status(500).json({ error: "Error creating CSV" });
   }
 };
 
+
 export const exportNurseDataToExcel = async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM nurse");
+    const { search } = req.query;
+
+    let query = "SELECT name, age, dob, license_number FROM nurse WHERE 1=1";
+    let params = [];
+
+    if (search) {
+      query += " AND (name LIKE ? OR license_number LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const [rows] = await db.query(query, params);
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Nurses");
+    const worksheet = workbook.addWorksheet("Nurses");
 
-    sheet.columns = [
-      { header: "ID", key: "id", width: 10 },
+    worksheet.columns = [
       { header: "Name", key: "name", width: 25 },
+      { header: "Age", key: "age", width: 25 },
+      { header: "DOB", key: "dob", width: 20 },
       { header: "License Number", key: "license_number", width: 25 },
-      { header: "DOB", key: "dob", width: 15 },
-      { header: "Age", key: "age", width: 10 }
     ];
 
-    rows.forEach((row) => sheet.addRow(row));
+    rows.forEach((row) => worksheet.addRow(row));
 
     res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=nurses.xlsx"
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
+    res.setHeader("Content-Disposition", "attachment; filename=nurses.xlsx");
 
     await workbook.xlsx.write(res);
     res.end();
+
   } catch (error) {
+    console.log(error);
     res.status(500).json({ error: "Error creating Excel" });
   }
-}
+};
